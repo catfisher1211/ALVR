@@ -1,5 +1,7 @@
 mod bitrate;
 mod c_api;
+#[cfg(target_os = "macos")]
+mod macos;
 mod connection;
 mod hand_gestures;
 mod haptics;
@@ -146,6 +148,13 @@ pub fn create_recording_file(connection_context: &ConnectionContext, settings: &
 }
 
 pub fn notify_restart_driver() {
+    // MacVR re-reads the stream config when the client reconnects; nothing to restart
+    #[cfg(target_os = "macos")]
+    {
+        alvr_common::info!("Stream config changed; the client will reconnect with it");
+        return;
+    }
+    #[allow(unreachable_code)]
     if sysinfo::System::new_all()
         .processes_by_name(OsStr::new(&afs::dashboard_fname()))
         .next()

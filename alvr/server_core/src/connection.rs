@@ -728,11 +728,15 @@ fn connection_pipeline(
         initial_settings.video.preferred_codec
     };
 
-    #[cfg_attr(target_os = "linux", allow(unused_variables))]
+    #[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(unused_variables))]
     let game_audio_sample_rate = if let Switch::Enabled(game_audio_config) =
         &initial_settings.audio.game_audio
     {
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "macos")]
+        {
+            crate::macos::GAME_AUDIO_SAMPLE_RATE
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let game_audio_device =
                 alvr_audio::AudioDevice::new_output(game_audio_config.device.as_ref()).to_con()?;
@@ -899,6 +903,17 @@ fn connection_pipeline(
 
         let client_hostname = client_hostname.clone();
         thread::spawn(move || {
+            #[cfg(target_os = "macos")]
+            {
+                // The host pushes PCM through alvr_macvr_send_game_audio while this connection streams
+                *crate::macos::GAME_AUDIO_SENDER.lock() = Some(game_audio_sender.clone());
+                while is_streaming(&client_hostname) {
+                    thread::sleep(Duration::from_millis(250));
+                }
+                *crate::macos::GAME_AUDIO_SENDER.lock() = None;
+                let _ = &config;
+            }
+            #[cfg(not(target_os = "macos"))]
             while is_streaming(&client_hostname) {
                 #[cfg(target_os = "linux")]
                 if let Err(e) = alvr_audio::linux::record_audio_blocking_pipewire(
@@ -913,7 +928,7 @@ fn connection_pipeline(
                     error!("Audio record error: {e:?}");
                 }
 
-                #[cfg(not(target_os = "linux"))]
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
                 {
                     let device = match alvr_audio::AudioDevice::new_output(config.device.as_ref()) {
                         Ok(data) => data,
@@ -977,7 +992,7 @@ fn connection_pipeline(
 
     let microphone_thread =
         if let Switch::Enabled(config) = initial_settings.audio.microphone.clone() {
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             #[allow(unused_variables)]
             let (sink, source) =
                 alvr_audio::AudioDevice::new_virtual_microphone_pair(config.devices).to_con()?;
@@ -997,7 +1012,25 @@ fn connection_pipeline(
 
             let client_hostname = client_hostname.clone();
             thread::spawn(move || {
-                #[cfg(not(target_os = "linux"))]
+                // The host drains the mono samples with alvr_macvr_read_microphone
+                #[cfg(target_os = "macos")]
+                {
+                    let rate = streaming_caps.microphone_sample_rate;
+                    *crate::macos::MICROPHONE_SAMPLE_RATE.lock() = rate;
+                    crate::macos::MICROPHONE_BUFFER.lock().clear();
+                    alvr_common::show_err(alvr_audio::receive_samples_loop(
+                        {
+                            let client_hostname = client_hostname.clone();
+                            move || is_streaming(&client_hostname)
+                        },
+                        &mut microphone_receiver,
+                        std::sync::Arc::clone(&crate::macos::MICROPHONE_BUFFER),
+                        1,
+                        rate as usize * config.buffering.batch_ms as usize / 1000,
+                        rate as usize * config.buffering.average_buffering_ms as usize / 1000,
+                    ));
+                }
+                #[cfg(not(any(target_os = "linux", target_os = "macos")))]
                 alvr_common::show_err(alvr_audio::play_audio_loop(
                     {
                         let client_hostname = client_hostname.clone();

@@ -277,6 +277,20 @@ impl StatisticsManager {
 
             // todo: use target timestamp in nanoseconds. the dashboard needs to use the first
             // timestamp as the graph time origin.
+            #[cfg(target_os = "macos")]
+            {
+                *crate::macos::LAST_STATISTICS.lock() = Some(serde_json::json!({
+                    "total_latency_ms": client_stats.total_pipeline_latency.as_secs_f32() * 1000.,
+                    "encoder_ms": encoder_latency.as_secs_f32() * 1000.,
+                    "network_ms": network_latency.as_secs_f32() * 1000.,
+                    "decoder_ms": client_stats.video_decode.as_secs_f32() * 1000.,
+                    "decoder_queue_ms": client_stats.video_decoder_queue.as_secs_f32() * 1000.,
+                    "client_fps": client_fps,
+                    "server_fps": server_fps,
+                    "bitrate_mbps": bitrate_bps / 1e6,
+                    "packets_lost_total": self.packets_lost_total,
+                }));
+            }
             alvr_events::send_event(EventType::GraphStatistics(GraphStatistics {
                 total_pipeline_latency_s: client_stats.total_pipeline_latency.as_secs_f32(),
                 game_time_s: game_time_latency.as_secs_f32(),

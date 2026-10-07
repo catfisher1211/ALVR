@@ -9,7 +9,9 @@ pub struct AnnouncerSocket {
 
 impl AnnouncerSocket {
     pub fn new(hostname: &str) -> Result<Self> {
-        let socket = UdpSocket::bind((LOCAL_IP, CONTROL_PORT))?;
+        // ALVR_MOCK_SAME_HOST: announce from an ephemeral port so a mock client can run beside the server
+        let port = if std::env::var_os("ALVR_MOCK_SAME_HOST").is_some() { 0 } else { CONTROL_PORT };
+        let socket = UdpSocket::bind((LOCAL_IP, port))?;
         socket.set_broadcast(true)?;
 
         let mut packet = [0; 56];
